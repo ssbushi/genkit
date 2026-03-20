@@ -32,8 +32,12 @@
     "format:check"
   ],
   "devDependencies": {
+    "@genkit-ai/core": "^1.30.1",
+    "@genkit-ai/googleai": "^1.28.0",
+    "@types/jsdom": "^28.0.1",
     "@types/node": "22.10.5",
     "inquirer": "^8.2.6",
+    "jsdom": "^29.0.1",
     "npm-run-all": "^4.1.5",
     "only-allow": "^1.2.1",
     "pre-commit": "^1.2.2",
@@ -42,7 +46,8 @@
     "prettier-plugin-organize-imports": "^3.2.4",
     "rimraf": "^6.0.1",
     "ts-node": "^10.9.2",
-    "tsx": "^4.20.3"
+    "tsx": "^4.20.3",
+    "zod": "^4.3.6"
   },
   "pnpm": {
     "overrides": {
