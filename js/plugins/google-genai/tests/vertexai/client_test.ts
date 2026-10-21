@@ -15,6 +15,7 @@
  */
 
 import * as assert from 'assert';
+import { logger } from 'genkit/logging';
 import { GoogleAuth } from 'google-auth-library';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import * as sinon from 'sinon';
@@ -1136,6 +1137,26 @@ describe('Vertex AI Client', () => {
         );
         return true;
       });
+    });
+
+    it('should log failed requests at debug level and not error level before rethrowing', async () => {
+      const errorStub = sinon.stub(logger, 'error');
+      const debugStub = sinon.stub(logger, 'debug');
+      mockFetchResponse(
+        { error: { message: 'Too many requests' } },
+        false,
+        429,
+        'Too Many Requests'
+      );
+
+      await assert.rejects(listModels(regionalClientOptions), (err: any) => {
+        assert.strictEqual(err.name, 'GenkitError');
+        assert.strictEqual(err.status, 'RESOURCE_EXHAUSTED');
+        return true;
+      });
+
+      sinon.assert.notCalled(errorStub);
+      sinon.assert.calledOnce(debugStub);
     });
   });
 

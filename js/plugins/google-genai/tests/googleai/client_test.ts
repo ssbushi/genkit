@@ -15,6 +15,7 @@
  */
 
 import * as assert from 'assert';
+import { logger } from 'genkit/logging';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import * as sinon from 'sinon';
 import { TextEncoder } from 'util';
@@ -271,6 +272,26 @@ describe('Google AI Client', () => {
         listModels(apiKey),
         /Failed to fetch from .* Network connection failed/
       );
+    });
+
+    it('should log failed requests at debug level and not error level before rethrowing', async () => {
+      const errorStub = sinon.stub(logger, 'error');
+      const debugStub = sinon.stub(logger, 'debug');
+      mockFetchResponse(
+        { error: { message: 'Too many requests' } },
+        false,
+        429,
+        'Too Many Requests'
+      );
+
+      await assert.rejects(listModels(apiKey), (err: any) => {
+        assert.strictEqual(err.name, 'GenkitError');
+        assert.strictEqual(err.status, 'RESOURCE_EXHAUSTED');
+        return true;
+      });
+
+      sinon.assert.notCalled(errorStub);
+      sinon.assert.calledOnce(debugStub);
     });
 
     it('does not apply Interactions error-code mapping to non-Interactions URLs', async () => {
