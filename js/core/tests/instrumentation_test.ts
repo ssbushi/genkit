@@ -14,7 +14,14 @@
  * limitations under the License.
  */
 
-import { trace, TraceFlags, type Span as ApiSpan } from '@opentelemetry/api';
+import {
+  SpanKind,
+  trace,
+  TraceFlags,
+  type Span as ApiSpan,
+} from '@opentelemetry/api';
+import { ExportResultCode, type ExportResult } from '@opentelemetry/core';
+import type { ReadableSpan } from '@opentelemetry/sdk-trace-base';
 import * as assert from 'assert';
 import * as http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -27,6 +34,7 @@ import {
   resetInstrumentation,
   runInNewSpan,
   setTelemetryServerUrl,
+  TraceServerExporter,
   type GenkitLogRecord,
   type GenkitSpanContext,
   type Instrumentation,
@@ -433,5 +441,123 @@ describe('DirectTelemetryInstrumentation realtime export', () => {
     const [attrs] = await exportedExceptionFor(new TypeError('bad input'));
     assert.equal(attrs['exception.type'], 'TypeError');
     assert.equal(attrs['exception.message'], 'bad input');
+  });
+});
+
+function fakeReadableSpan(
+  traceId: string,
+  spanId: string,
+  name = spanId
+): ReadableSpan {
+  return {
+    name,
+    kind: SpanKind.INTERNAL,
+    spanContext: () => ({
+      traceId,
+      spanId,
+      traceFlags: TraceFlags.SAMPLED,
+    }),
+    startTime: [1, 0],
+    endTime: [2, 0],
+    status: { code: 0 },
+    attributes: {},
+    links: [],
+    events: [],
+    duration: [1, 0],
+    ended: true,
+    resource: { attributes: {} } as any,
+    instrumentationLibrary: { name: 'genkit-tracer', version: '1.0' },
+    droppedAttributesCount: 0,
+    droppedEventsCount: 0,
+    droppedLinksCount: 0,
+  };
+}
+
+describe('TraceServerExporter', () => {
+  let server: http.Server;
+  let posted: any[] = [];
+  let failFirst = false;
+
+  beforeEach(async () => {
+    posted = [];
+    failFirst = false;
+    server = http.createServer((req, res) => {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        if (failFirst) {
+          failFirst = false;
+          res.destroy();
+          return;
+        }
+        if (req.url === '/api/traces') posted.push(JSON.parse(body));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end('{}');
+      });
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, '127.0.0.1', resolve)
+    );
+    const addr = server.address() as AddressInfo;
+    setTelemetryServerUrl(`http://127.0.0.1:${addr.port}`);
+  });
+
+  afterEach(async () => {
+    setTelemetryServerUrl('');
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it('exports all traces in a multi-trace span batch', async () => {
+    const exporter = new TraceServerExporter();
+    const spans = [
+      fakeReadableSpan('a'.repeat(32), '1'.repeat(16), 'span-a1'),
+      fakeReadableSpan('a'.repeat(32), '2'.repeat(16), 'span-a2'),
+      fakeReadableSpan('b'.repeat(32), '3'.repeat(16), 'span-b1'),
+    ];
+
+    const result = await new Promise<ExportResult>((resolve) =>
+      exporter.export(spans, resolve)
+    );
+
+    assert.equal(result.code, ExportResultCode.SUCCESS);
+    assert.deepStrictEqual(
+      posted.map((t) => t.traceId),
+      ['a'.repeat(32), 'b'.repeat(32)]
+    );
+    assert.deepStrictEqual(Object.keys(posted[0].spans), [
+      '1'.repeat(16),
+      '2'.repeat(16),
+    ]);
+    assert.deepStrictEqual(Object.keys(posted[1].spans), ['3'.repeat(16)]);
+  });
+
+  it('continues saving remaining traces and reports FAILED when a trace save fails', async () => {
+    failFirst = true;
+    const exporter = new TraceServerExporter();
+    const spans = [
+      fakeReadableSpan('a'.repeat(32), '1'.repeat(16), 'span-a'),
+      fakeReadableSpan('b'.repeat(32), '2'.repeat(16), 'span-b'),
+    ];
+
+    const result = await new Promise<ExportResult>((resolve) =>
+      exporter.export(spans, resolve)
+    );
+
+    assert.equal(result.code, ExportResultCode.FAILED);
+    assert.deepStrictEqual(
+      posted.map((t) => t.traceId),
+      ['b'.repeat(32)]
+    );
+  });
+
+  it('calls result callback with SUCCESS for an empty span batch', async () => {
+    const exporter = new TraceServerExporter();
+
+    const result = await new Promise<ExportResult>((resolve) =>
+      exporter.export([], resolve)
+    );
+
+    assert.equal(result.code, ExportResultCode.SUCCESS);
+    assert.deepStrictEqual(posted, []);
   });
 });
