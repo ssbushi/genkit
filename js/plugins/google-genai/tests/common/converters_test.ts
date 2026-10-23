@@ -1584,6 +1584,174 @@ describe('toGeminiTool', () => {
       /Unsupported property type FUNCTION/
     );
   });
+
+  it('should resolve $ref in array items and object properties using $defs and definitions', () => {
+    const got = toGeminiTool({
+      name: 'create_draft',
+      description: 'Create an email draft',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          attachments: {
+            description: 'The attachments to include in the email.',
+            type: 'array',
+            items: {
+              $ref: '#/$defs/Attachment',
+            },
+          },
+          primaryAttachment: {
+            $ref: '#/$defs/Attachment',
+            description: 'The primary attachment override description.',
+          },
+        },
+        $defs: {
+          Attachment: {
+            description: 'Represents an attachment.',
+            type: 'object',
+            properties: {
+              content: {
+                description: 'Base64 content.',
+                type: 'string',
+              },
+              inline: {
+                type: 'boolean',
+              },
+            },
+            required: ['content'],
+          },
+        },
+      },
+    });
+
+    assert.deepStrictEqual(got, {
+      name: 'create_draft',
+      description: 'Create an email draft',
+      parameters: {
+        type: SchemaType.OBJECT,
+        required: undefined,
+        properties: {
+          attachments: {
+            description: 'The attachments to include in the email.',
+            type: SchemaType.ARRAY,
+            items: {
+              description: 'Represents an attachment.',
+              type: SchemaType.OBJECT,
+              properties: {
+                content: {
+                  description: 'Base64 content.',
+                  type: SchemaType.STRING,
+                },
+                inline: {
+                  type: SchemaType.BOOLEAN,
+                },
+              },
+              required: ['content'],
+            },
+          },
+          primaryAttachment: {
+            description: 'The primary attachment override description.',
+            type: SchemaType.OBJECT,
+            properties: {
+              content: {
+                description: 'Base64 content.',
+                type: SchemaType.STRING,
+              },
+              inline: {
+                type: SchemaType.BOOLEAN,
+              },
+            },
+            required: ['content'],
+          },
+        },
+      },
+    });
+
+    const gotDefinitions = toGeminiTool({
+      name: 'legacy_defs',
+      description: 'Tool with definitions',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          item: { $ref: '#/definitions/Item' },
+        },
+        definitions: {
+          Item: {
+            type: 'string',
+          },
+        },
+      },
+    });
+
+    assert.deepStrictEqual(gotDefinitions, {
+      name: 'legacy_defs',
+      description: 'Tool with definitions',
+      parameters: {
+        type: SchemaType.OBJECT,
+        required: undefined,
+        properties: {
+          item: {
+            type: SchemaType.STRING,
+          },
+        },
+      },
+    });
+  });
+
+  it('should guard against circular $ref and throw on unresolvable $ref', () => {
+    const circular = toGeminiTool({
+      name: 'tree_tool',
+      description: 'Tool with circular schema',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          root: { $ref: '#/$defs/Node' },
+        },
+        $defs: {
+          Node: {
+            type: 'object',
+            properties: {
+              value: { type: 'string' },
+              child: { $ref: '#/$defs/Node' },
+            },
+          },
+        },
+      },
+    });
+
+    assert.deepStrictEqual(circular, {
+      name: 'tree_tool',
+      description: 'Tool with circular schema',
+      parameters: {
+        type: SchemaType.OBJECT,
+        required: undefined,
+        properties: {
+          root: {
+            type: SchemaType.OBJECT,
+            required: undefined,
+            properties: {
+              value: { type: SchemaType.STRING },
+              child: undefined,
+            },
+          },
+        },
+      },
+    });
+
+    assert.throws(
+      () =>
+        toGeminiTool({
+          name: 'missing_ref',
+          description: 'Tool with missing $ref',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              missing: { $ref: '#/$defs/DoesNotExist' },
+            },
+          },
+        }),
+      /Unable to resolve schema \$ref #\/\$defs\/DoesNotExist/
+    );
+  });
 });
 
 describe('toGeminiFunctionModeEnum', () => {

@@ -617,4 +617,52 @@ describe('toGeminiTool', () => {
       },
     });
   });
+
+  it('resolves $ref in array items and properties', () => {
+    const got = toGeminiTool({
+      name: 'create_draft',
+      description: 'Create draft',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          attachments: {
+            type: 'array',
+            items: { $ref: '#/$defs/Attachment' },
+          },
+        },
+        $defs: {
+          Attachment: {
+            description: 'Represents an attachment.',
+            type: 'object',
+            properties: {
+              content: { type: 'string' },
+            },
+            required: ['content'],
+          },
+        },
+      },
+    });
+
+    assert.deepStrictEqual(got, {
+      name: 'create_draft',
+      description: 'Create draft',
+      parameters: {
+        type: 'OBJECT',
+        required: undefined,
+        properties: {
+          attachments: {
+            type: 'ARRAY',
+            items: {
+              description: 'Represents an attachment.',
+              type: 'OBJECT',
+              properties: {
+                content: { type: 'STRING' },
+              },
+              required: ['content'],
+            },
+          },
+        },
+      },
+    });
+  });
 });

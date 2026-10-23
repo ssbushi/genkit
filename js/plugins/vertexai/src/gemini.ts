@@ -996,8 +996,50 @@ function fromGeminiThought(part: {
 // Translate JSON schema to Vertex AI's format. Specifically, the type field needs be mapped.
 // Since JSON schemas can include nested arrays/objects, we have to recursively map the type field
 // in all nested fields.
-function convertSchemaProperty(property) {
-  if (!property || !property.type) {
+function convertSchemaProperty(
+  property,
+  defs?: Record<string, any>,
+  refs: Set<string> = new Set()
+) {
+  if (!property) {
+    return undefined;
+  }
+  const resolvedDefs =
+    defs ??
+    (typeof property.$defs === 'object' && property.$defs !== null
+      ? property.$defs
+      : typeof property.definitions === 'object' &&
+          property.definitions !== null
+        ? property.definitions
+        : {});
+
+  if (typeof property.$ref === 'string') {
+    const refPath = property.$ref;
+    const refTokens = refPath.split('/');
+    const refName = refTokens[refTokens.length - 1];
+    if (!refName || !(refName in resolvedDefs)) {
+      throw new GenkitError({
+        status: 'INVALID_ARGUMENT',
+        message: `Unable to resolve schema $ref ${refPath}`,
+      });
+    }
+    if (refs.has(refName)) {
+      return undefined;
+    }
+    const nextRefs = new Set(refs);
+    nextRefs.add(refName);
+    const schema = convertSchemaProperty(
+      resolvedDefs[refName],
+      resolvedDefs,
+      nextRefs
+    );
+    if (schema && property.description) {
+      schema.description = property.description;
+    }
+    return schema;
+  }
+
+  if (!property.type) {
     return undefined;
   }
   const baseSchema = {} as Schema;
@@ -1025,7 +1067,11 @@ function convertSchemaProperty(property) {
   if (propertyType === 'object') {
     const nestedProperties = {};
     Object.keys(property.properties ?? {}).forEach((key) => {
-      nestedProperties[key] = convertSchemaProperty(property.properties[key]);
+      nestedProperties[key] = convertSchemaProperty(
+        property.properties[key],
+        resolvedDefs,
+        refs
+      );
     });
     return {
       ...baseSchema,
@@ -1037,7 +1083,7 @@ function convertSchemaProperty(property) {
     return {
       ...baseSchema,
       type: FunctionDeclarationSchemaType.ARRAY,
-      items: convertSchemaProperty(property.items),
+      items: convertSchemaProperty(property.items, resolvedDefs, refs),
     };
   } else {
     const schemaType = FunctionDeclarationSchemaType[

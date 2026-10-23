@@ -49,8 +49,52 @@ export function toGeminiTool(tool: ToolDefinition): FunctionDeclaration {
   return declaration;
 }
 
-function toGeminiSchemaProperty(property?: ToolDefinition['inputSchema']) {
-  if (!property || !property.type) {
+function toGeminiSchemaProperty(
+  property?: ToolDefinition['inputSchema'],
+  defs?: Record<string, ToolDefinition['inputSchema']>,
+  refs: Set<string> = new Set()
+) {
+  if (!property) {
+    return undefined;
+  }
+  const resolvedDefs =
+    defs ??
+    (isObject(property.$defs)
+      ? (property.$defs as Record<string, ToolDefinition['inputSchema']>)
+      : isObject(property.definitions)
+        ? (property.definitions as Record<
+            string,
+            ToolDefinition['inputSchema']
+          >)
+        : {});
+
+  if (typeof property.$ref === 'string') {
+    const refPath = property.$ref;
+    const refTokens = refPath.split('/');
+    const refName = refTokens[refTokens.length - 1];
+    if (!refName || !(refName in resolvedDefs)) {
+      throw new GenkitError({
+        status: 'INVALID_ARGUMENT',
+        message: `Unable to resolve schema $ref ${refPath}`,
+      });
+    }
+    if (refs.has(refName)) {
+      return undefined;
+    }
+    const nextRefs = new Set(refs);
+    nextRefs.add(refName);
+    const schema = toGeminiSchemaProperty(
+      resolvedDefs[refName],
+      resolvedDefs,
+      nextRefs
+    );
+    if (schema && property.description) {
+      schema.description = property.description;
+    }
+    return schema;
+  }
+
+  if (!property.type) {
     return undefined;
   }
   const baseSchema: Schema = {};
@@ -80,7 +124,9 @@ function toGeminiSchemaProperty(property?: ToolDefinition['inputSchema']) {
     if (property.properties) {
       Object.keys(property.properties).forEach((key) => {
         nestedProperties[key] = toGeminiSchemaProperty(
-          property.properties[key]
+          property.properties[key],
+          resolvedDefs,
+          refs
         );
       });
     }
@@ -94,7 +140,7 @@ function toGeminiSchemaProperty(property?: ToolDefinition['inputSchema']) {
     return {
       ...baseSchema,
       type: SchemaType.ARRAY,
-      items: toGeminiSchemaProperty(property.items),
+      items: toGeminiSchemaProperty(property.items, resolvedDefs, refs),
     };
   } else {
     const schemaType = SchemaType[propertyType.toUpperCase()] as SchemaType;
