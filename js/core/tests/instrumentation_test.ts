@@ -549,4 +549,15 @@ describe('TraceServerExporter', () => {
       ['b'.repeat(32)]
     );
   });
+
+  it('calls result callback with SUCCESS for an empty span batch', async () => {
+    const exporter = new TraceServerExporter();
+
+    const result = await new Promise<ExportResult>((resolve) =>
+      exporter.export([], resolve)
+    );
+
+    assert.equal(result.code, ExportResultCode.SUCCESS);
+    assert.deepStrictEqual(posted, []);
+  });
 });
