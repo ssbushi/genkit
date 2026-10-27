@@ -66,6 +66,7 @@ from genkit import (
     ModelResponseChunk,
     Part,
     Role,
+    ToolChoice,
 )
 from genkit.model import (
     Candidate,
@@ -257,6 +258,13 @@ class FunctionCallingConfig(BaseModel):
     mode: FunctionCallingMode | None = None
     allowed_function_names: list[str] | None = Field(None, alias='allowedFunctionNames')
     stream_function_call_arguments: bool | None = Field(None, alias='streamFunctionCallArguments')
+
+
+_TOOL_CHOICE_MODE: dict[ToolChoice, genai_types.FunctionCallingConfigMode] = {
+    'auto': genai_types.FunctionCallingConfigMode.AUTO,
+    'required': genai_types.FunctionCallingConfigMode.ANY,
+    'none': genai_types.FunctionCallingConfigMode.NONE,
+}
 
 
 class ThinkingLevel(StrEnum):
@@ -2258,7 +2266,15 @@ class GeminiModel:
 
         has_output = bool(request.output_format or request.output_schema or request.output_content_type)
 
-        if cfg is not None or tools or system_instruction or has_output or leftovers or extra:
+        if (
+            cfg is not None
+            or tools
+            or request.tool_choice is not None
+            or system_instruction
+            or has_output
+            or leftovers
+            or extra
+        ):
             if cfg is None:
                 cfg = genai_types.GenerateContentConfig()
 
@@ -2282,6 +2298,13 @@ class GeminiModel:
 
             if tools:
                 cfg.tools = cast(genai_types.ToolListUnion, tools)
+
+            if request.tool_choice is not None and cfg.tool_config is None:
+                cfg.tool_config = genai_types.ToolConfig(
+                    function_calling_config=genai_types.FunctionCallingConfig(
+                        mode=_TOOL_CHOICE_MODE[request.tool_choice],
+                    ),
+                )
 
             cfg.system_instruction = genai_types.Content(parts=system_instruction) if system_instruction else None
             cfg = attach_leftovers(cfg, leftovers, nest='generationConfig')

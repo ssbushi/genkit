@@ -51,7 +51,7 @@ from google.genai.errors import APIError
 from pydantic import BaseModel, Field, HttpUrl, ValidationError
 from pytest_mock import MockerFixture
 
-from genkit import ActionRunContext, FinishReason, GenkitError, Message, ModelResponse, Part, Role
+from genkit import ActionRunContext, FinishReason, GenkitError, Message, ModelResponse, Part, Role, ToolChoice
 from genkit._core._compat import StrEnum
 from genkit.model import Constrained, ModelInfo, ModelRequest, OutputConfig, Supports, ToolDefinition
 from genkit.plugin_api import to_json_schema
@@ -2632,6 +2632,79 @@ async def test_gemini_model__tool_toggle_empty_options_attaches_tool(gemini_mode
     assert [t.code_execution is not None for t in tools] == [True, False, False]
     assert [t.google_search is not None for t in tools] == [False, True, False]
     assert [t.url_context is not None for t in tools] == [False, False, True]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('tool_choice', 'expected_mode'),
+    [
+        ('auto', genai_types.FunctionCallingConfigMode.AUTO),
+        ('required', genai_types.FunctionCallingConfigMode.ANY),
+        ('none', genai_types.FunctionCallingConfigMode.NONE),
+    ],
+)
+async def test_gemini_model__tool_choice_maps_to_function_calling_mode(
+    gemini_model_instance: GeminiModel,
+    tool_choice: ToolChoice,
+    expected_mode: genai_types.FunctionCallingConfigMode,
+) -> None:
+    """`request.tool_choice` maps onto `tool_config.function_calling_config.mode`."""
+    request = ModelRequest(
+        messages=[Message(role=Role.USER, content=[Part.from_text('hi')])],
+        tools=[ToolDefinition(name='get_weather', description='Get weather')],
+        tool_choice=tool_choice,
+    )
+
+    cfg = await gemini_model_instance._genkit_to_googleai_cfg(request)
+
+    assert cfg is not None
+    assert cfg.tool_config == genai_types.ToolConfig(
+        function_calling_config=genai_types.FunctionCallingConfig(mode=expected_mode)
+    )
+
+
+@pytest.mark.asyncio
+async def test_gemini_model__omitted_tool_choice_leaves_tool_config_unset(
+    gemini_model_instance: GeminiModel,
+) -> None:
+    """Omitting `tool_choice` (`None`) leaves `tool_config` unset on the Gemini request."""
+    request = ModelRequest(
+        messages=[Message(role=Role.USER, content=[Part.from_text('hi')])],
+        tools=[ToolDefinition(name='get_weather', description='Get weather')],
+    )
+
+    cfg = await gemini_model_instance._genkit_to_googleai_cfg(request)
+
+    assert cfg is not None
+    assert cfg.tool_config is None
+
+
+@pytest.mark.asyncio
+async def test_gemini_model__function_calling_config_overrides_tool_choice(
+    gemini_model_instance: GeminiModel,
+) -> None:
+    """Explicit `config.function_calling_config` wins over `request.tool_choice`."""
+    request = ModelRequest(
+        messages=[Message(role=Role.USER, content=[Part.from_text('hi')])],
+        tools=[ToolDefinition(name='get_weather', description='Get weather')],
+        tool_choice='none',
+        config=GeminiConfig.model_validate({
+            'function_calling_config': {
+                'mode': 'ANY',
+                'allowed_function_names': ['get_weather'],
+            },
+        }),
+    )
+
+    cfg = await gemini_model_instance._genkit_to_googleai_cfg(request)
+
+    assert cfg is not None
+    assert cfg.tool_config == genai_types.ToolConfig(
+        function_calling_config=genai_types.FunctionCallingConfig(
+            mode=genai_types.FunctionCallingConfigMode.ANY,
+            allowed_function_names=['get_weather'],
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
