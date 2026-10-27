@@ -15,6 +15,7 @@
  */
 
 import * as assert from 'assert';
+import { logger } from 'genkit/logging';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import * as sinon from 'sinon';
 import { TextEncoder } from 'util';
@@ -271,6 +272,21 @@ describe('Google AI Client', () => {
         listModels(apiKey),
         /Failed to fetch from .* Network connection failed/
       );
+    });
+
+    it('should log failed requests at debug level instead of error', async () => {
+      const errorSpy = sinon.spy(logger, 'error');
+      const debugSpy = sinon.spy(logger, 'debug');
+      mockFetchResponse(
+        { error: { message: 'Internal Error' } },
+        false,
+        500,
+        'Internal Server Error'
+      );
+
+      await assert.rejects(listModels(apiKey));
+      sinon.assert.notCalled(errorSpy);
+      sinon.assert.calledOnce(debugSpy);
     });
 
     it('does not apply Interactions error-code mapping to non-Interactions URLs', async () => {
