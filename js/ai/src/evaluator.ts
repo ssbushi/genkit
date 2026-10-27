@@ -129,7 +129,7 @@ function withMetadata<
 const EvalRequestSchema = z.object({
   dataset: z.array(BaseDataPointSchema),
   evalRunId: z.string(),
-  options: z.unknown(),
+  options: z.unknown().optional(),
 });
 
 /** Parameters for running an evaluation via {@link evaluate}. */
@@ -206,7 +206,7 @@ export function evaluator<
         dataset: options.dataPointType
           ? z.array(options.dataPointType)
           : z.array(BaseDataPointSchema),
-        options: options.configSchema ?? z.unknown(),
+        options: (options.configSchema ?? z.unknown()).optional(),
         evalRunId: z.string(),
         batchSize: z.number().optional(),
       }),

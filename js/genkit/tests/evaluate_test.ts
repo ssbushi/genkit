@@ -16,7 +16,8 @@
 
 import * as assert from 'assert';
 import { beforeEach, describe, it } from 'node:test';
-import { genkit, type Genkit } from '../src/index.js';
+import { genkit, z, type Genkit } from '../src/index.js';
+import { toJsonSchema } from '../src/schema.js';
 import { bonknessEvaluator } from './helpers';
 
 describe('evaluate', () => {
@@ -47,6 +48,46 @@ describe('evaluate', () => {
         response[0].evaluation.details?.reasoning,
         'Because I said so!'
       );
+    });
+
+    it('calls evaluator defined with configSchema without options', async () => {
+      const customEvaluator = ai.defineEvaluator(
+        {
+          name: 'customBonkness',
+          displayName: 'Custom Bonkness',
+          definition: 'Judges whether a statement is bonk with optional config',
+          configSchema: z.object({ judgeModel: z.string().optional() }),
+        },
+        async (datapoint, cfg) => ({
+          testCaseId: datapoint.testCaseId,
+          evaluation: {
+            score: cfg?.judgeModel ?? 'default-judge',
+          },
+        })
+      );
+
+      const inputJsonSchema = toJsonSchema({
+        schema: customEvaluator.__action.inputSchema,
+      });
+      assert.deepStrictEqual(inputJsonSchema?.required, [
+        'dataset',
+        'evalRunId',
+      ]);
+
+      const response = await ai.evaluate({
+        evaluator: customEvaluator,
+        dataset: [
+          {
+            testCaseId: 'test-case-1',
+            input: 'Why did the chicken cross the road?',
+            output: 'To get to the other side',
+          },
+        ],
+        evalRunId: 'my-dog-eval',
+      });
+
+      assert.strictEqual(response.length, 1);
+      assert.strictEqual(response[0].evaluation.score, 'default-judge');
     });
   });
 });
