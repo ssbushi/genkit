@@ -15,6 +15,7 @@
  */
 
 import * as assert from 'assert';
+import { logger } from 'genkit/logging';
 import { GoogleAuth } from 'google-auth-library';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import * as sinon from 'sinon';
@@ -1237,6 +1238,21 @@ describe('Vertex AI Client', () => {
         );
         return true;
       });
+    });
+
+    it('should log failed requests at debug level instead of error', async () => {
+      const errorSpy = sinon.spy(logger, 'error');
+      const debugSpy = sinon.spy(logger, 'debug');
+      mockFetchResponse(
+        { error: { message: 'Internal Error' } },
+        false,
+        500,
+        'Internal Server Error'
+      );
+
+      await assert.rejects(listModels(regionalClientOptions));
+      sinon.assert.notCalled(errorSpy);
+      sinon.assert.calledOnce(debugSpy);
     });
   });
 
