@@ -16,8 +16,8 @@
 
 import * as assert from 'assert';
 import { beforeEach, describe, it } from 'node:test';
+import { toJsonSchema } from '@genkit-ai/core';
 import { genkit, z, type Genkit } from '../src/index.js';
-import { toJsonSchema } from '../src/schema.js';
 import { bonknessEvaluator } from './helpers';
 
 describe('evaluate', () => {
@@ -88,6 +88,22 @@ describe('evaluate', () => {
 
       assert.strictEqual(response.length, 1);
       assert.strictEqual(response[0].evaluation.score, 'default-judge');
+
+      await assert.rejects(
+        ai.evaluate({
+          evaluator: customEvaluator,
+          dataset: [
+            {
+              testCaseId: 'test-case-1',
+              input: 'Why did the chicken cross the road?',
+              output: 'To get to the other side',
+            },
+          ],
+          evalRunId: 'my-dog-eval',
+          options: { judgeModel: 123 as any },
+        }),
+        /Schema validation failed/
+      );
     });
   });
 });
