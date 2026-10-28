@@ -74,7 +74,7 @@ export type Score = z.infer<typeof ScoreSchema>;
 export const EvalRequestSchema = z.object({
   dataset: z.array(BaseDataPointSchema),
   evalRunId: z.string(),
-  options: z.unknown(),
+  options: z.unknown().optional(),
 });
 export type EvalRequest = z.infer<typeof EvalRequestSchema>;
 
