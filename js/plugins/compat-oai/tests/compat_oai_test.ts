@@ -1830,6 +1830,36 @@ describe('toOpenAiRequestBody', () => {
       'OpenAI strict output requires output.format="json" and an output schema.'
     );
   });
+
+  it('uses visualDetailLevel for image media without leaking it into the request body', () => {
+    const request = {
+      messages: [
+        {
+          role: 'user',
+          content: [{ media: { url: 'https://example.com/image.png' } }],
+        },
+      ],
+      config: { visualDetailLevel: 'high' },
+    } as unknown as GenerateRequest;
+
+    const actualOutput = toOpenAIRequestBody('gpt-4o', request) as any;
+
+    expect(actualOutput.messages).toStrictEqual([
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'image_url',
+            image_url: {
+              url: 'https://example.com/image.png',
+              detail: 'high',
+            },
+          },
+        ],
+      },
+    ]);
+    expect(actualOutput.visualDetailLevel).toBeUndefined();
+  });
 });
 
 describe('openAIModelRunner', () => {
