@@ -22,6 +22,7 @@ import { AgentError, remoteAgent } from '../src/client/agent';
 import {
   createAgentAPI,
   remoteAgentTransport,
+  streamFlow,
   type AgentInit,
   type AgentInput,
   type AgentOutput,
@@ -831,5 +832,64 @@ describe('custom transport', () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+describe('streamFlow', () => {
+  let mock: FetchMock;
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    mock = new FetchMock();
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = mock.fetch as any;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it('resolves streamId to null when fetch rejects before response headers', async () => {
+    mock.onNext(async () => {
+      throw new Error('connection failed');
+    });
+
+    const call = streamFlow({ url: '/api/flow', input: 'hello' });
+    const nextChunk = call.stream[Symbol.asyncIterator]().next();
+
+    await assert.rejects(call.output, /connection failed/);
+    await assert.rejects(nextChunk, /connection failed/);
+    const settled = await Promise.race([
+      call.streamId.then((id) => ({ settled: true, id })),
+      new Promise<{ settled: false }>((resolve) =>
+        setTimeout(() => resolve({ settled: false }), 50)
+      ),
+    ]);
+    assert.deepEqual(settled, { settled: true, id: null });
+  });
+
+  it('retains streamId from response headers when reading the body later fails', async () => {
+    mock.onNext(() => {
+      const stream = new ReadableStream<Uint8Array>({
+        pull() {
+          throw new Error('stream read failed');
+        },
+      });
+      return new Response(stream, {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'x-genkit-stream-id': 'stream-123',
+        },
+      });
+    });
+
+    const call = streamFlow({ url: '/api/flow', input: 'hello' });
+    const nextChunk = call.stream[Symbol.asyncIterator]().next();
+
+    assert.equal(await call.streamId, 'stream-123');
+    await assert.rejects(call.output, /stream read failed/);
+    await assert.rejects(nextChunk, /stream read failed/);
+    assert.equal(await call.streamId, 'stream-123');
   });
 });
