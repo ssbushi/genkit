@@ -54,26 +54,45 @@ const MOCK_END_RESPONSE = {
 
 const MAGIC_WORD = 'sunnnnnnny';
 
+let capturedRequests: { url: string; body: Record<string, any> }[] = [];
+
 // Mock fetch to simulate API responses
 global.fetch = async (input: RequestInfo | URL, options?: RequestInit) => {
   const url = typeof input === 'string' ? input : input.toString();
+  const body = options?.body ? JSON.parse(options.body as string) : undefined;
+  capturedRequests.push({ url, body });
   if (url.includes('/api/chat')) {
-    if (options?.body && JSON.stringify(options.body).includes(MAGIC_WORD)) {
+    if (
+      !body?.tools?.length ||
+      (options?.body && JSON.stringify(options.body).includes(MAGIC_WORD))
+    ) {
       return new Response(JSON.stringify(MOCK_END_RESPONSE));
     }
     return new Response(JSON.stringify(MOCK_TOOL_CALL_RESPONSE));
+  }
+  if (url.includes('/api/generate')) {
+    return new Response(
+      JSON.stringify({
+        ...MOCK_END_RESPONSE,
+        response: MOCK_END_RESPONSE.message.content,
+      })
+    );
   }
   throw new Error('Unknown API endpoint');
 };
 
 describe('ollama models', () => {
   const options: OllamaPluginParams = {
-    models: [{ name: 'test-model', supports: { tools: true } }],
+    models: [
+      { name: 'test-model', supports: { tools: true } },
+      { name: 'test-generate-model', type: 'generate' },
+    ],
     serverAddress: 'http://localhost:3000',
   };
 
   let ai: Genkit;
   beforeEach(() => {
+    capturedRequests = [];
     ai = genkit({
       plugins: [ollama(options)],
     });
@@ -128,5 +147,33 @@ describe('ollama models', () => {
         tools: [get_current_weather, fooz],
       });
     });
+  });
+
+  it('should serialize stopSequences as an array in options.stop for chat and generate models', async () => {
+    await ai.generate({
+      model: 'ollama/test-model',
+      prompt: 'Hello',
+      config: { stopSequences: ['<END>', '<USER>'] },
+    });
+    await ai.generate({
+      model: 'ollama/test-generate-model',
+      prompt: 'Hello',
+      config: { stopSequences: ['<END>'] },
+    });
+
+    assert.strictEqual(capturedRequests.length, 2);
+    assert.strictEqual(
+      capturedRequests[0].url,
+      'http://localhost:3000/api/chat'
+    );
+    assert.deepStrictEqual(capturedRequests[0].body.options.stop, [
+      '<END>',
+      '<USER>',
+    ]);
+    assert.strictEqual(
+      capturedRequests[1].url,
+      'http://localhost:3000/api/generate'
+    );
+    assert.deepStrictEqual(capturedRequests[1].body.options.stop, ['<END>']);
   });
 });
