@@ -999,13 +999,65 @@ function fromGeminiThought(part: {
   };
 }
 
+/**
+ * Resolves a local JSON Pointer `$ref` (e.g., `#/$defs/Node`) against the root schema.
+ */
+function resolveSchemaRef(
+  ref: string,
+  rootSchema?: Record<string, any> | null
+): Record<string, any> | undefined {
+  if (!rootSchema || !ref.startsWith('#')) {
+    return undefined;
+  }
+  if (ref === '#') {
+    return rootSchema;
+  }
+  if (!ref.startsWith('#/')) {
+    return undefined;
+  }
+  const segments = ref
+    .slice(2)
+    .split('/')
+    .map((s) => decodeURIComponent(s).replace(/~1/g, '/').replace(/~0/g, '~'));
+  let current: any = rootSchema;
+  for (const segment of segments) {
+    if (current && typeof current === 'object' && segment in current) {
+      current = current[segment];
+    } else {
+      return undefined;
+    }
+  }
+  return current && typeof current === 'object' ? current : undefined;
+}
+
 // Translate JSON schema to Vertex AI's format. Specifically, the type field needs be mapped.
 // Since JSON schemas can include nested arrays/objects, we have to recursively map the type field
 // in all nested fields.
 function convertSchemaProperty(
-  property?: Record<string, any> | null
+  property?: Record<string, any> | null,
+  rootSchema: Record<string, any> | null | undefined = property,
+  visitedRefs: Set<string> = new Set()
 ): Schema | undefined {
-  if (!property || !property.type) {
+  if (!property) {
+    return undefined;
+  }
+  if (typeof property.$ref === 'string') {
+    if (visitedRefs.has(property.$ref)) {
+      return undefined;
+    }
+    const resolved = resolveSchemaRef(property.$ref, rootSchema);
+    if (resolved) {
+      const { $ref, ...rest } = property;
+      const nextVisited = new Set(visitedRefs);
+      nextVisited.add($ref);
+      return convertSchemaProperty(
+        { ...resolved, ...rest },
+        rootSchema,
+        nextVisited
+      );
+    }
+  }
+  if (!property.type) {
     return undefined;
   }
   const baseSchema = {} as Schema;
@@ -1031,21 +1083,28 @@ function convertSchemaProperty(
     propertyType = property.type;
   }
   if (propertyType === 'object') {
-    const nestedProperties: Record<string, Schema | undefined> = {};
+    const nestedProperties: Record<string, Schema> = {};
     Object.keys(property.properties ?? {}).forEach((key) => {
-      nestedProperties[key] = convertSchemaProperty(property.properties[key]);
+      const prop = convertSchemaProperty(
+        property.properties[key],
+        rootSchema,
+        visitedRefs
+      );
+      if (prop) {
+        nestedProperties[key] = prop;
+      }
     });
     return {
       ...baseSchema,
       type: FunctionDeclarationSchemaType.OBJECT,
-      properties: nestedProperties as Record<string, Schema>,
+      properties: nestedProperties,
       required: property.required,
     };
   } else if (propertyType === 'array') {
     return {
       ...baseSchema,
       type: FunctionDeclarationSchemaType.ARRAY,
-      items: convertSchemaProperty(property.items),
+      items: convertSchemaProperty(property.items, rootSchema, visitedRefs),
     };
   } else {
     const schemaType = (

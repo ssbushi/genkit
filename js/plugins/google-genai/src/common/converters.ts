@@ -52,10 +52,62 @@ export function toGeminiTool(tool: ToolDefinition): FunctionDeclaration {
   return declaration;
 }
 
+/**
+ * Resolves a local JSON Pointer `$ref` (e.g., `#/$defs/Node`) against the root schema.
+ */
+function resolveSchemaRef(
+  ref: string,
+  rootSchema?: ToolDefinition['inputSchema']
+): Record<string, any> | undefined {
+  if (!rootSchema || !ref.startsWith('#')) {
+    return undefined;
+  }
+  if (ref === '#') {
+    return rootSchema;
+  }
+  if (!ref.startsWith('#/')) {
+    return undefined;
+  }
+  const segments = ref
+    .slice(2)
+    .split('/')
+    .map((s) => decodeURIComponent(s).replace(/~1/g, '/').replace(/~0/g, '~'));
+  let current: any = rootSchema;
+  for (const segment of segments) {
+    if (isObject(current) && segment in current) {
+      current = current[segment];
+    } else {
+      return undefined;
+    }
+  }
+  return isObject(current) ? current : undefined;
+}
+
 function toGeminiSchemaProperty(
-  property?: ToolDefinition['inputSchema']
+  property?: ToolDefinition['inputSchema'],
+  rootSchema: ToolDefinition['inputSchema'] = property,
+  visitedRefs: Set<string> = new Set()
 ): Schema | undefined {
-  if (!property || !property.type) {
+  if (!property) {
+    return undefined;
+  }
+  if (typeof property.$ref === 'string') {
+    if (visitedRefs.has(property.$ref)) {
+      return undefined;
+    }
+    const resolved = resolveSchemaRef(property.$ref, rootSchema);
+    if (resolved) {
+      const { $ref, ...rest } = property;
+      const nextVisited = new Set(visitedRefs);
+      nextVisited.add($ref);
+      return toGeminiSchemaProperty(
+        { ...resolved, ...rest },
+        rootSchema,
+        nextVisited
+      );
+    }
+  }
+  if (!property.type) {
     return undefined;
   }
   const baseSchema: Schema = {};
@@ -84,7 +136,11 @@ function toGeminiSchemaProperty(
     const nestedProperties: Record<string, Schema> = {};
     if (property.properties) {
       Object.keys(property.properties).forEach((key) => {
-        const prop = toGeminiSchemaProperty(property.properties![key]);
+        const prop = toGeminiSchemaProperty(
+          property.properties![key],
+          rootSchema,
+          visitedRefs
+        );
         if (prop) {
           nestedProperties[key] = prop;
         }
@@ -100,7 +156,7 @@ function toGeminiSchemaProperty(
     return {
       ...baseSchema,
       type: SchemaType.ARRAY,
-      items: toGeminiSchemaProperty(property.items),
+      items: toGeminiSchemaProperty(property.items, rootSchema, visitedRefs),
     };
   } else {
     const schemaType = (SchemaType as unknown as Record<string, SchemaType>)[

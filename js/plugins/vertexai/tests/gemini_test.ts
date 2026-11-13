@@ -617,4 +617,137 @@ describe('toGeminiTool', () => {
       },
     });
   });
+
+  it('resolves $ref in array items and object properties', () => {
+    const got = toGeminiTool({
+      name: 'create_draft',
+      description: 'Create an email draft',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          attachments: {
+            description: 'The attachments to include in the email.',
+            type: 'array',
+            items: {
+              $ref: '#/$defs/Attachment',
+            },
+          },
+          primaryAttachment: {
+            description: 'Override description for primary attachment.',
+            $ref: '#/definitions/Attachment',
+          },
+        },
+        $defs: {
+          Attachment: {
+            description: 'Represents an attachment.',
+            type: 'object',
+            properties: {
+              content: {
+                description: 'Base64-encoded content.',
+                type: 'string',
+              },
+            },
+            required: ['content'],
+          },
+        },
+        definitions: {
+          Attachment: {
+            description: 'Represents an attachment.',
+            type: 'object',
+            properties: {
+              filename: {
+                type: 'string',
+              },
+            },
+          },
+        },
+      },
+    });
+
+    assert.deepStrictEqual(got, {
+      name: 'create_draft',
+      description: 'Create an email draft',
+      parameters: {
+        type: 'OBJECT',
+        required: undefined,
+        properties: {
+          attachments: {
+            description: 'The attachments to include in the email.',
+            type: 'ARRAY',
+            items: {
+              description: 'Represents an attachment.',
+              type: 'OBJECT',
+              properties: {
+                content: {
+                  description: 'Base64-encoded content.',
+                  type: 'STRING',
+                },
+              },
+              required: ['content'],
+            },
+          },
+          primaryAttachment: {
+            description: 'Override description for primary attachment.',
+            type: 'OBJECT',
+            properties: {
+              filename: {
+                type: 'STRING',
+              },
+            },
+            required: undefined,
+          },
+        },
+      },
+    });
+  });
+
+  it('handles circular $ref without infinite recursion', () => {
+    const got = toGeminiTool({
+      name: 'tree_tool',
+      description: 'Tool with recursive schema',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          root: {
+            $ref: '#/$defs/Node',
+          },
+        },
+        $defs: {
+          Node: {
+            type: 'object',
+            properties: {
+              name: { type: 'string' },
+              child: { $ref: '#/$defs/Node' },
+              children: {
+                type: 'array',
+                items: { $ref: '#/$defs/Node' },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    assert.deepStrictEqual(got, {
+      name: 'tree_tool',
+      description: 'Tool with recursive schema',
+      parameters: {
+        type: 'OBJECT',
+        required: undefined,
+        properties: {
+          root: {
+            type: 'OBJECT',
+            required: undefined,
+            properties: {
+              name: { type: 'STRING' },
+              children: {
+                type: 'ARRAY',
+                items: undefined,
+              },
+            },
+          },
+        },
+      },
+    });
+  });
 });
