@@ -14,7 +14,14 @@
  * limitations under the License.
  */
 
-import { trace, TraceFlags, type Span as ApiSpan } from '@opentelemetry/api';
+import {
+  SpanKind,
+  trace,
+  TraceFlags,
+  type Span as ApiSpan,
+} from '@opentelemetry/api';
+import { ExportResultCode, type ExportResult } from '@opentelemetry/core';
+import type { ReadableSpan } from '@opentelemetry/sdk-trace-base';
 import * as assert from 'assert';
 import * as http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -27,6 +34,7 @@ import {
   resetInstrumentation,
   runInNewSpan,
   setTelemetryServerUrl,
+  TraceServerExporter,
   type GenkitLogRecord,
   type GenkitSpanContext,
   type Instrumentation,
@@ -433,5 +441,85 @@ describe('DirectTelemetryInstrumentation realtime export', () => {
     const [attrs] = await exportedExceptionFor(new TypeError('bad input'));
     assert.equal(attrs['exception.type'], 'TypeError');
     assert.equal(attrs['exception.message'], 'bad input');
+  });
+});
+
+function fakeReadableSpan(
+  traceId: string,
+  spanId: string,
+  name: string
+): ReadableSpan {
+  return {
+    name,
+    kind: SpanKind.INTERNAL,
+    spanContext: () => ({
+      traceId,
+      spanId,
+      traceFlags: TraceFlags.SAMPLED,
+    }),
+    startTime: [1, 0],
+    endTime: [2, 0],
+    status: { code: 0 },
+    attributes: {},
+    links: [],
+    events: [],
+    duration: [1, 0],
+    ended: true,
+    resource: { attributes: {} } as any,
+    instrumentationLibrary: { name: 'genkit-tracer' },
+    droppedAttributesCount: 0,
+    droppedEventsCount: 0,
+    droppedLinksCount: 0,
+  };
+}
+
+describe('TraceServerExporter', () => {
+  it('saves all traces in a multi-trace batch before invoking resultCallback', async () => {
+    const exporter = new TraceServerExporter();
+    const savedTraceIds: string[] = [];
+    (exporter as any).save = async (traceId: string) => {
+      savedTraceIds.push(traceId);
+    };
+
+    const spans = [
+      fakeReadableSpan('1'.repeat(32), 'a'.repeat(16), 'span-1a'),
+      fakeReadableSpan('1'.repeat(32), 'b'.repeat(16), 'span-1b'),
+      fakeReadableSpan('2'.repeat(32), 'c'.repeat(16), 'span-2'),
+      fakeReadableSpan('3'.repeat(32), 'd'.repeat(16), 'span-3'),
+    ];
+
+    const result = await new Promise<ExportResult>((resolve) => {
+      exporter.export(spans, resolve);
+    });
+
+    assert.equal(result.code, ExportResultCode.SUCCESS);
+    assert.deepStrictEqual(savedTraceIds, [
+      '1'.repeat(32),
+      '2'.repeat(32),
+      '3'.repeat(32),
+    ]);
+  });
+
+  it('continues saving remaining traces and reports FAILED when a save throws', async () => {
+    const exporter = new TraceServerExporter();
+    const savedTraceIds: string[] = [];
+    (exporter as any).save = async (traceId: string) => {
+      savedTraceIds.push(traceId);
+      if (traceId === '1'.repeat(32)) {
+        throw new Error('save failed');
+      }
+    };
+
+    const spans = [
+      fakeReadableSpan('1'.repeat(32), 'a'.repeat(16), 'span-1'),
+      fakeReadableSpan('2'.repeat(32), 'b'.repeat(16), 'span-2'),
+    ];
+
+    const result = await new Promise<ExportResult>((resolve) => {
+      exporter.export(spans, resolve);
+    });
+
+    assert.equal(result.code, ExportResultCode.FAILED);
+    assert.deepStrictEqual(savedTraceIds, ['1'.repeat(32), '2'.repeat(32)]);
   });
 });
